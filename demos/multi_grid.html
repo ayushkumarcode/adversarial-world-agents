@@ -586,9 +586,11 @@ let redKills = 0, blueKills = 0, engagements = 0;
 const phases = ['DEPLOYMENT', 'RECON', 'ENGAGEMENT', 'ASSAULT', 'CONSOLIDATION'];
 let currentPhase = 0;
 
-const GEMINI_API_KEY = 'AIzaSyDOOGtfWUD3g5kEHUJd1zr9mufxwrAb5tQ';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`;
-const NANOBANANA_MODEL = 'gemini-3.1-flash-image-preview';
+// All API calls routed through OpenRouter
+const OPENROUTER_API_KEY = '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';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const REASONING_MODEL = 'google/gemini-2.5-flash';
+const NANOBANANA_MODEL = 'gemini-3.1-flash-image-preview'; // display name only
 let geminiInFlight = false; // prevent overlapping requests
 let prevGameSnapshot = null; // track changes between turns
 let iframeReports = new Map(); // cam index -> {screenshot, state} from iframe postMessage
@@ -1017,29 +1019,29 @@ You MUST respond with valid JSON matching this exact schema:
 }
 Respond ONLY with the JSON object. No markdown, no code fences, no explanation.`;
 
-  // Build request parts (multimodal if screenshot available)
-  const parts = [];
+  // Build OpenRouter message content (multimodal if screenshot available)
+  const content = [];
   if (screenshot) {
-    const match = screenshot.match(/^data:(image\/\w+);base64,(.+)$/);
-    if (match) {
-      parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
-      console.log(`[GEMINI] Attached image: ${match[1]}, ${(match[2].length / 1024).toFixed(0)}KB base64`);
-    } else {
-      console.warn('[GEMINI] Screenshot data URL format invalid, sending text-only');
-    }
+    content.push({ type: 'image_url', image_url: { url: screenshot } });
+    console.log(`[GEMINI] Attached screenshot: ${(screenshot.length / 1024).toFixed(0)}KB`);
   }
-  parts.push({ text: promptText });
-  console.log(`[GEMINI] Request parts: ${parts.length} (${parts.map(p => p.inlineData ? 'IMAGE' : 'TEXT').join(' + ')})`);
+  content.push({ type: 'text', text: promptText });
+  console.log(`[GEMINI] Request parts: ${content.length} (${content.map(p => p.type).join(' + ')})`);
 
   const requestStartTime = performance.now();
   try {
-    console.log(`[GEMINI] Calling API... (${GEMINI_URL.substring(0, 80)}...)`);
-    const resp = await fetch(GEMINI_URL, {
+    console.log(`[GEMINI] Calling OpenRouter — model: ${REASONING_MODEL}`);
+    const resp = await fetch(OPENROUTER_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      },
       body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 10000, responseMimeType: 'application/json' }
+        model: REASONING_MODEL,
+        messages: [{ role: 'user', content }],
+        temperature: 0.7,
+        max_tokens: 2048,
       })
     });
 
@@ -1048,23 +1050,19 @@ Respond ONLY with the JSON object. No markdown, no code fences, no explanation.`
     if (!resp.ok) {
       const errBody = await resp.text();
       console.error(`[GEMINI] API error ${resp.status} (${elapsed}ms):`, errBody.substring(0, 300));
-      throw new Error(`Gemini API ${resp.status}: ${errBody.substring(0, 100)}`);
+      throw new Error(`OpenRouter ${resp.status}: ${errBody.substring(0, 100)}`);
     }
 
     const data = await resp.json();
-    const candidate = data.candidates?.[0];
-    // Concatenate ALL text parts (some models split across multiple parts)
-    const allParts = candidate?.content?.parts || [];
-    const text = allParts.map(p => p.text || '').join('');
-    const finishReason = candidate?.finishReason || 'UNKNOWN';
-    console.log(`[GEMINI] Response received (${elapsed}ms, ${text.length} chars, finish: ${finishReason}, parts: ${allParts.length})`);
+    const choice = data.choices?.[0];
+    const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+    const finishReason = choice?.finish_reason || 'UNKNOWN';
+    console.log(`[GEMINI] Response received (${elapsed}ms, ${text.length} chars, finish: ${finishReason})`);
     console.log(`[GEMINI] Raw response:`, text.substring(0, 500));
-    if (finishReason !== 'STOP') console.warn(`[GEMINI] Unexpected finishReason: ${finishReason}`);
 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error('[GEMINI] No JSON found in response. Full text:', text);
-      console.error('[GEMINI] Full API response:', JSON.stringify(data).substring(0, 500));
       throw new Error('No JSON in response');
     }
 
@@ -1073,15 +1071,12 @@ Respond ONLY with the JSON object. No markdown, no code fences, no explanation.`
       reasoning = JSON.parse(jsonMatch[0]);
     } catch (parseErr) {
       console.error('[GEMINI] JSON parse failed:', parseErr.message);
-      console.error('[GEMINI] Attempted to parse:', jsonMatch[0].substring(0, 300));
-      // Try to salvage truncated response — extract what we can
       const sawMatch = text.match(/"saw"\s*:\s*"([^"]*)/);
       const planMatch = text.match(/"plan"\s*:\s*"([^"]*)/);
       if (sawMatch) {
-        console.warn('[GEMINI] Salvaging partial response');
         reasoning = {
-          red: { saw: sawMatch[1] || '--', plan: planMatch?.[1] || '--', risk: 'Response truncated', did: '--' },
-          blue: { saw: '--', plan: '--', risk: 'Response truncated', did: '--' },
+          red: { saw: sawMatch[1] || '--', plan: planMatch?.[1] || '--', risk: 'Truncated', did: '--' },
+          blue: { saw: '--', plan: '--', risk: 'Truncated', did: '--' },
         };
       } else {
         throw new Error('Invalid JSON: ' + parseErr.message);
@@ -1276,49 +1271,67 @@ function buildTacticalPrompt(state) {
   return desc;
 }
 
-// Models to try for image generation, in order of preference
-const NANOBANANA_MODELS = [
-  NANOBANANA_MODEL,           // gemini-3.1-flash-image-preview
-  'gemini-2.0-flash-exp',     // alternate with image gen support
+// Image generation models to try in order
+const IMAGE_MODELS = [
+  'google/gemini-2.5-flash-image',
+  'google/gemini-2.0-flash-exp-image-generation',
+  'google/gemini-3.1-flash-image-preview',
 ];
 
-async function tryNanoBananaModel(modelName, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-  };
+async function tryImageModel(modelName, prompt) {
   console.log(`[NANOBANANA] Trying model: ${modelName}`);
-  console.log(`[NANOBANANA] URL: ${url}`);
-  console.log(`[NANOBANANA] Body includes responseModalities: ['TEXT', 'IMAGE']`);
 
-  const response = await fetch(url, {
+  const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: 'user', content: prompt }],
+      modalities: ['image', 'text'],
+    }),
   });
 
-  console.log(`[NANOBANANA] ${modelName} — status: ${response.status} ${response.statusText}`);
+  console.log(`[NANOBANANA] ${modelName} — status: ${response.status}`);
 
   if (!response.ok) {
     const errText = await response.text();
     console.error(`[NANOBANANA] ${modelName} — error:`, errText.substring(0, 300));
-    throw new Error(`${modelName} API ${response.status}: ${errText.substring(0, 150)}`);
+    throw new Error(`${modelName} ${response.status}: ${errText.substring(0, 150)}`);
   }
 
   const data = await response.json();
-  const candidate = data.candidates?.[0];
-  const parts = candidate?.content?.parts || [];
-  console.log(`[NANOBANANA] ${modelName} — response parts:`, parts.map(p => ({
-    hasText: !!p.text, textLen: p.text?.length || 0,
-    hasImage: !!p.inlineData, mime: p.inlineData?.mimeType, dataLen: p.inlineData?.data?.length || 0,
-  })));
-  console.log(`[NANOBANANA] ${modelName} — finishReason:`, candidate?.finishReason);
+  const choice = data.choices?.[0];
+  const msg = choice?.message;
+  console.log(`[NANOBANANA] ${modelName} — finish: ${choice?.finish_reason}, content type: ${typeof msg?.content}, content null: ${msg?.content === null}`);
 
   let imageData = null, textResponse = '';
-  for (const part of parts) {
-    if (part.inlineData) imageData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-    if (part.text) textResponse += part.text;
+
+  if (typeof msg?.content === 'string') {
+    textResponse = msg.content;
+    const b64Match = textResponse.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
+    if (b64Match) imageData = b64Match[0];
+  } else if (Array.isArray(msg?.content)) {
+    console.log(`[NANOBANANA] ${modelName} — content array with ${msg.content.length} parts`);
+    for (const part of msg.content) {
+      console.log(`[NANOBANANA] Part:`, part.type, Object.keys(part));
+      if (part.type === 'text') textResponse += part.text || '';
+      else if (part.type === 'image_url') imageData = part.image_url?.url || null;
+      else if (part.type === 'image') {
+        if (part.source?.data) imageData = `data:${part.source.media_type || 'image/png'};base64,${part.source.data}`;
+        else if (part.data) imageData = `data:image/png;base64,${part.data}`;
+      }
+    }
+  }
+
+  if (!imageData) {
+    // Log full structure for debugging
+    console.warn(`[NANOBANANA] ${modelName} — no image found. Full msg:`, JSON.stringify(msg).substring(0, 500));
+    console.warn(`[NANOBANANA] ${modelName} — full response:`, JSON.stringify(data).substring(0, 800));
+  } else {
+    console.log(`[NANOBANANA] ${modelName} — GOT IMAGE! prefix:`, imageData.substring(0, 80));
   }
 
   return { imageData, textResponse, prompt, model: modelName };
@@ -1328,22 +1341,19 @@ async function generateTacticalFrame(state) {
   const prompt = buildTacticalPrompt(state);
   const errors = [];
 
-  for (const modelName of NANOBANANA_MODELS) {
+  for (const model of IMAGE_MODELS) {
     try {
-      const result = await tryNanoBananaModel(modelName, prompt);
+      const result = await tryImageModel(model, prompt);
       if (result.imageData) {
-        console.log(`[NANOBANANA] SUCCESS with ${modelName} — got image!`);
+        console.log(`[NANOBANANA] SUCCESS with ${model}`);
         return result;
       }
-      console.warn(`[NANOBANANA] ${modelName} returned no image, trying next...`);
-      errors.push(`${modelName}: no image returned`);
+      errors.push(`${model}: no image returned`);
     } catch (e) {
-      console.warn(`[NANOBANANA] ${modelName} failed: ${e.message}`);
       errors.push(e.message);
     }
   }
 
-  // All models failed
   const errMsg = errors.join(' | ');
   console.error('[NANOBANANA] ALL MODELS FAILED:', errMsg);
   throw new Error(errMsg);
@@ -1422,7 +1432,7 @@ async function captureOnce() {
   // Add turn card immediately (frame will fill in async)
   const prompt = buildTacticalPrompt(state);
   console.log('[PIPELINE] NanoBanana prompt (first 200 chars):', prompt.substring(0, 200));
-  console.log('[PIPELINE] Calling NanoBanana API — model:', NANOBANANA_MODEL, 'key prefix:', GEMINI_API_KEY.substring(0, 10) + '...');
+  console.log('[PIPELINE] Calling NanoBanana via OpenRouter');
 
   const framePromise = generateTacticalFrame(state).then(result => {
     console.log('[PIPELINE] NanoBanana response received — hasImage:', !!result.imageData, 'textLen:', result.textResponse?.length || 0);
