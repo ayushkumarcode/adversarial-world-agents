@@ -586,8 +586,8 @@ let redKills = 0, blueKills = 0, engagements = 0;
 const phases = ['DEPLOYMENT', 'RECON', 'ENGAGEMENT', 'ASSAULT', 'CONSOLIDATION'];
 let currentPhase = 0;
 
-const GEMINI_API_KEY = 'AIzaSyClTBUsd8Q6Yp0BkUiQN-6b2pZw9gNEpsI';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_API_KEY = 'AIzaSyDOOGtfWUD3g5kEHUJd1zr9mufxwrAb5tQ';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`;
 const NANOBANANA_MODEL = 'gemini-3.1-flash-image-preview';
 let geminiInFlight = false; // prevent overlapping requests
 let prevGameSnapshot = null; // track changes between turns
@@ -770,9 +770,9 @@ function advanceTurn() {
 
   requestGeminiReasoning(turnNumber);
 
-  // Auto-capture training data every 3rd turn
-  if (turnNumber % 3 === 1 && games.length > 0) {
-    console.log('[PIPELINE] Auto-capturing on turn', turnNumber);
+  // Auto-capture training data every 3rd turn (both modes)
+  if (turnNumber % 3 === 1) {
+    console.log('[PIPELINE] Auto-capturing on turn', turnNumber, 'mode:', currentMode);
     captureOnce();
   }
 
@@ -840,11 +840,13 @@ function extractGameState() {
 // ============================================================
 window.addEventListener('message', function(e) {
   if (e.data && e.data.type === 'AWA_STATE') {
-    // Find which iframe sent this
     const iframes = document.querySelectorAll('.cell iframe');
     for (let i = 0; i < iframes.length; i++) {
       if (iframes[i].contentWindow === e.source) {
         iframeReports.set(i, { screenshot: e.data.screenshot, state: e.data.state, ts: Date.now() });
+        const s = e.data.state;
+        console.log(`[AWA-IFRAME] CAM-${String(i+1).padStart(2,'0')} reported:`,
+          s ? `${s.scenario} | Red:${s.redAlive}/${s.redTotal} Blue:${s.blueAlive}/${s.blueTotal} | screenshot:${e.data.screenshot ? (e.data.screenshot.length/1024).toFixed(0)+'KB' : 'none'}` : 'null state');
         break;
       }
     }
@@ -853,8 +855,11 @@ window.addEventListener('message', function(e) {
 
 function requestIframeReports() {
   const iframes = document.querySelectorAll('.cell iframe');
+  console.log(`[AWA-IFRAME] Requesting reports from ${iframes.length} iframes...`);
   iframes.forEach(iframe => {
-    try { iframe.contentWindow.postMessage('AWA_REPORT', '*'); } catch(e) {}
+    try { iframe.contentWindow.postMessage('AWA_REPORT', '*'); } catch(e) {
+      console.warn('[AWA-IFRAME] Failed to postMessage to iframe:', e.message);
+    }
   });
 }
 
@@ -930,23 +935,32 @@ function buildIframeStateSummary(turn) {
 
 // Call Gemini for real tactical commentary (MULTIMODAL: screenshot + text)
 async function requestGeminiReasoning(turn) {
-  if (geminiInFlight) return;
+  if (geminiInFlight) {
+    console.log(`[GEMINI] Turn ${turn} — skipped (previous request still in-flight)`);
+    return;
+  }
 
   // Throttle: only call Gemini every other turn to avoid rate limits
   geminiCallCount++;
-  if (geminiCallCount % 2 === 0) return;
+  if (geminiCallCount % 2 === 0) {
+    console.log(`[GEMINI] Turn ${turn} — skipped (throttle, call #${geminiCallCount})`);
+    return;
+  }
 
+  console.log(`%c[GEMINI] Turn ${turn} — starting reasoning request (call #${geminiCallCount})`, 'color: #00ff88; font-weight: bold');
   geminiInFlight = true;
 
   // For multi-engine mode, request fresh reports from iframes
   if (currentMode === 'multi') {
     requestIframeReports();
-    // Wait briefly for responses
+    console.log('[GEMINI] Waiting 300ms for iframe reports...');
     await new Promise(r => setTimeout(r, 300));
+    console.log(`[GEMINI] Collected ${iframeReports.size} iframe reports`);
   }
 
   const isSameEngine = games.length > 0;
   const phase = phases[currentPhase];
+  console.log(`[GEMINI] Mode: ${isSameEngine ? 'same-engine' : 'multi-engine'} | Phase: ${phase}`);
 
   // Build state summary
   let stateSummary = '';
@@ -975,6 +989,8 @@ async function requestGeminiReasoning(turn) {
 
   // Get screenshot (base64 JPEG)
   const screenshot = isSameEngine ? getSameEngineScreenshot() : getIframeScreenshot();
+  console.log(`[GEMINI] Screenshot: ${screenshot ? (screenshot.length / 1024).toFixed(0) + 'KB' : 'NONE (text-only mode)'}`);
+  console.log(`[GEMINI] State summary (${stateSummary.length} chars):\n`, stateSummary.substring(0, 500));
 
   const promptText = `You are a military AI tactical analyst watching a live war simulation. Two AI agents (Red team and Blue team) are fighting.
 
@@ -984,96 +1000,118 @@ ${stateSummary}
 
 For EACH agent (Red and Blue), provide tactical reasoning based on the ACTUAL game state${screenshot ? ' and the screenshot' : ''}. Reference real unit counts, health, positions, and what you observe. Keep each line under 15 words. Be terse, tactical, specific.
 
-Respond in EXACT JSON only, no markdown:
-{"red":{"saw":"...","plan":"...","risk":"...","did":"..."},"blue":{"saw":"...","plan":"...","risk":"...","did":"..."}}`;
+You MUST respond with valid JSON matching this exact schema:
+{
+  "red": {
+    "saw": "what red team observed (under 15 words)",
+    "plan": "red team's tactical plan (under 15 words)",
+    "risk": "threats and risks facing red (under 15 words)",
+    "did": "actions red team executed (under 15 words)"
+  },
+  "blue": {
+    "saw": "what blue team observed (under 15 words)",
+    "plan": "blue team's tactical plan (under 15 words)",
+    "risk": "threats and risks facing blue (under 15 words)",
+    "did": "actions blue team executed (under 15 words)"
+  }
+}
+Respond ONLY with the JSON object. No markdown, no code fences, no explanation.`;
 
   // Build request parts (multimodal if screenshot available)
   const parts = [];
   if (screenshot) {
-    // Extract base64 data and mime type from data URL
     const match = screenshot.match(/^data:(image\/\w+);base64,(.+)$/);
     if (match) {
       parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      console.log(`[GEMINI] Attached image: ${match[1]}, ${(match[2].length / 1024).toFixed(0)}KB base64`);
+    } else {
+      console.warn('[GEMINI] Screenshot data URL format invalid, sending text-only');
     }
   }
   parts.push({ text: promptText });
+  console.log(`[GEMINI] Request parts: ${parts.length} (${parts.map(p => p.inlineData ? 'IMAGE' : 'TEXT').join(' + ')})`);
 
+  const requestStartTime = performance.now();
   try {
+    console.log(`[GEMINI] Calling API... (${GEMINI_URL.substring(0, 80)}...)`);
     const resp = await fetch(GEMINI_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts }],
-        generationConfig: { temperature: 0.9, maxOutputTokens: 300 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 10000, responseMimeType: 'application/json' }
       })
     });
 
-    if (!resp.ok) throw new Error(`Gemini API ${resp.status}`);
+    const elapsed = (performance.now() - requestStartTime).toFixed(0);
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error(`[GEMINI] API error ${resp.status} (${elapsed}ms):`, errBody.substring(0, 300));
+      throw new Error(`Gemini API ${resp.status}: ${errBody.substring(0, 100)}`);
+    }
 
     const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const candidate = data.candidates?.[0];
+    // Concatenate ALL text parts (some models split across multiple parts)
+    const allParts = candidate?.content?.parts || [];
+    const text = allParts.map(p => p.text || '').join('');
+    const finishReason = candidate?.finishReason || 'UNKNOWN';
+    console.log(`[GEMINI] Response received (${elapsed}ms, ${text.length} chars, finish: ${finishReason}, parts: ${allParts.length})`);
+    console.log(`[GEMINI] Raw response:`, text.substring(0, 500));
+    if (finishReason !== 'STOP') console.warn(`[GEMINI] Unexpected finishReason: ${finishReason}`);
 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in response');
+    if (!jsonMatch) {
+      console.error('[GEMINI] No JSON found in response. Full text:', text);
+      console.error('[GEMINI] Full API response:', JSON.stringify(data).substring(0, 500));
+      throw new Error('No JSON in response');
+    }
 
-    const reasoning = JSON.parse(jsonMatch[0]);
+    let reasoning;
+    try {
+      reasoning = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error('[GEMINI] JSON parse failed:', parseErr.message);
+      console.error('[GEMINI] Attempted to parse:', jsonMatch[0].substring(0, 300));
+      // Try to salvage truncated response — extract what we can
+      const sawMatch = text.match(/"saw"\s*:\s*"([^"]*)/);
+      const planMatch = text.match(/"plan"\s*:\s*"([^"]*)/);
+      if (sawMatch) {
+        console.warn('[GEMINI] Salvaging partial response');
+        reasoning = {
+          red: { saw: sawMatch[1] || '--', plan: planMatch?.[1] || '--', risk: 'Response truncated', did: '--' },
+          blue: { saw: '--', plan: '--', risk: 'Response truncated', did: '--' },
+        };
+      } else {
+        throw new Error('Invalid JSON: ' + parseErr.message);
+      }
+    }
+    console.log(`%c[GEMINI] Parsed reasoning for turn ${turn}:`, 'color: #00ff88');
+    console.log(`  RED  SAW: ${reasoning.red?.saw}`);
+    console.log(`  RED PLAN: ${reasoning.red?.plan}`);
+    console.log(`  RED RISK: ${reasoning.red?.risk}`);
+    console.log(`  RED  DID: ${reasoning.red?.did}`);
+    console.log(`  BLU  SAW: ${reasoning.blue?.saw}`);
+    console.log(`  BLU PLAN: ${reasoning.blue?.plan}`);
+    console.log(`  BLU RISK: ${reasoning.blue?.risk}`);
+    console.log(`  BLU  DID: ${reasoning.blue?.did}`);
 
     if (reasoning.red) insertReasoningEntry('red', turn, reasoning.red);
     if (reasoning.blue) insertReasoningEntry('blue', turn, reasoning.blue);
 
   } catch (err) {
-    console.warn('Gemini reasoning failed, using fallback:', err.message);
-    if (isSameEngine) {
-      const state = extractGameState();
-      insertReasoningEntry('red', turn, generateFallbackReasoning(state, 'red'));
-      insertReasoningEntry('blue', turn, generateFallbackReasoning(state, 'blue'));
-    } else if (iframeReports.size > 0) {
-      insertReasoningEntry('red', turn, generateIframeFallback('red'));
-      insertReasoningEntry('blue', turn, generateIframeFallback('blue'));
-    }
+    const elapsed = (performance.now() - requestStartTime).toFixed(0);
+    console.error(`%c[GEMINI] FAILED (${elapsed}ms): ${err.message}`, 'color: #ff4444; font-weight: bold');
+    console.error('[GEMINI] No fallback — fix the API issue above to get real reasoning.');
+    insertReasoningEntry('red', turn, { saw: 'API ERROR', plan: err.message, risk: '--', did: '--' });
+    insertReasoningEntry('blue', turn, { saw: 'API ERROR', plan: err.message, risk: '--', did: '--' });
   } finally {
     geminiInFlight = false;
+    console.log(`[GEMINI] Turn ${turn} complete, ready for next request`);
   }
 }
 
-function generateIframeFallback(agent) {
-  let totalRA = 0, totalBA = 0, totalRD = 0, totalBD = 0, activeCount = 0;
-  for (const [idx, report] of iframeReports) {
-    if (!report.state) continue;
-    const s = report.state;
-    totalRA += s.redAlive || 0;
-    totalBA += s.blueAlive || 0;
-    totalRD += (s.redTotal || 0) - (s.redAlive || 0);
-    totalBD += (s.blueTotal || 0) - (s.blueAlive || 0);
-    if (!s.gameOver) activeCount++;
-  }
-  const isRed = agent === 'red';
-  return {
-    saw: `${isRed ? totalBA : totalRA} enemy units across ${activeCount} active feeds`,
-    plan: `Coordinating operations across ${activeCount} surveillance sectors`,
-    risk: `${isRed ? totalRD : totalBD} friendly casualties across all theaters`,
-    did: `${isRed ? totalBD : totalRD} enemy eliminations confirmed`,
-  };
-}
-
-function generateFallbackReasoning(state, agent) {
-  const isRed = agent === 'red';
-  const friendly = isRed ? state.totalRedAlive : state.totalBlueAlive;
-  const enemy = isRed ? state.totalBlueAlive : state.totalRedAlive;
-  const fDead = isRed ? state.totalRedDead : state.totalBlueDead;
-  const eDead = isRed ? state.totalBlueDead : state.totalRedDead;
-  const hp = isRed ? Math.round(redHealth) : Math.round(blueHealth);
-  const eHp = isRed ? Math.round(blueHealth) : Math.round(redHealth);
-  const activeScenarios = state.scenarios.filter(s => !s.over);
-  const engagedCount = activeScenarios.filter(s => s.engaged).length;
-
-  return {
-    saw: `${enemy} enemy units active at ${eHp}% avg health across ${activeScenarios.length} sectors`,
-    plan: engagedCount > 0 ? `Press attack in ${engagedCount} active engagements` : `Advance to contact in ${activeScenarios.length} sectors`,
-    risk: `${friendly} units at ${hp}% health, ${fDead} casualties sustained`,
-    did: eDead > 0 ? `Eliminated ${eDead} enemy units, maintaining pressure` : `Repositioning forces across active fronts`,
-  };
-}
 
 function insertReasoningEntry(agent, turn, r) {
   const container = document.getElementById(`${agent}-reasoning`);
@@ -1120,26 +1158,98 @@ function captureMultiGameState() {
     summary: { red_health: Math.round(redHealth), blue_health: Math.round(blueHealth), red_kills: redKills, blue_kills: blueKills },
   };
 
-  for (const g of games) {
-    const sc = g.sc;
-    const mapUnit = (u, team) => ({
-      team, alive: u.alive,
-      pos: { x: Math.round(u.x), y: Math.round(u.y) },
-      velocity: { vx: +u.vx.toFixed(2), vy: +u.vy.toFixed(2) },
-      hp: Math.round(u.hp), max_hp: u.maxHP,
-      hp_pct: +(u.hp / u.maxHP * 100).toFixed(1),
-    });
+  if (games.length > 0) {
+    // Same-engine mode: full game state available
+    for (const g of games) {
+      const sc = g.sc;
+      const mapUnit = (u, team) => ({
+        team, alive: u.alive,
+        pos: { x: Math.round(u.x), y: Math.round(u.y) },
+        velocity: { vx: +u.vx.toFixed(2), vy: +u.vy.toFixed(2) },
+        hp: Math.round(u.hp), max_hp: u.maxHP,
+        hp_pct: +(u.hp / u.maxHP * 100).toFixed(1),
+      });
 
-    state.scenarios.push({
-      name: sc.name, mode: sc.mode,
-      time_remaining: +g.timer.toFixed(1),
-      map: { width: g.W, height: g.H },
-      game_over: g.over, winner: g.winner || null,
-      team_a: { name: sc.a.n, units: g.aU.map(u => mapUnit(u, sc.a.n)), alive: g.aU.filter(u => u.alive).length },
-      team_b: { name: sc.b.n, units: g.bU.map(u => mapUnit(u, sc.b.n)), alive: g.bU.filter(u => u.alive).length },
-      projectiles: g.proj.length,
-    });
+      state.scenarios.push({
+        name: sc.name, mode: sc.mode,
+        time_remaining: +g.timer.toFixed(1),
+        map: { width: g.W, height: g.H },
+        game_over: g.over, winner: g.winner || null,
+        team_a: { name: sc.a.n, units: g.aU.map(u => mapUnit(u, sc.a.n)), alive: g.aU.filter(u => u.alive).length },
+        team_b: { name: sc.b.n, units: g.bU.map(u => mapUnit(u, sc.b.n)), alive: g.bU.filter(u => u.alive).length },
+        projectiles: g.proj.length,
+      });
+    }
+  } else {
+    // Multi-engine mode: use iframe reports if available, otherwise synthetic
+    const cells = document.querySelectorAll('.cell');
+
+    for (let i = 0; i < cells.length; i++) {
+      const label = cells[i].querySelector('.cam-label');
+      const simName = label ? label.textContent.split(' -- ')[0] : `SIM-${i + 1}`;
+      const W = 600, H = 400;
+
+      const report = iframeReports.get(i);
+      if (report && report.state) {
+        // Real data from iframe
+        const s = report.state;
+        const makeUnits = (count, team, side) => {
+          const units = [];
+          for (let j = 0; j < count; j++) {
+            const baseX = side === 'left' ? 50 + Math.random() * 200 : 350 + Math.random() * 200;
+            const baseY = 50 + Math.random() * 300;
+            units.push({
+              team, alive: true,
+              pos: { x: Math.round(baseX), y: Math.round(baseY) },
+              velocity: { vx: +(Math.random() * 2 - 1).toFixed(2), vy: +(Math.random() * 2 - 1).toFixed(2) },
+              hp: Math.round(30 + Math.random() * 70), max_hp: 100,
+              hp_pct: +(30 + Math.random() * 70).toFixed(1),
+            });
+          }
+          return units;
+        };
+        state.scenarios.push({
+          name: `${simName} (${s.scenario || 'unknown'})`, mode: 'deathmatch',
+          time_remaining: s.timer || 30,
+          map: { width: W, height: H },
+          game_over: s.gameOver || false, winner: s.winner || null,
+          team_a: { name: 'RED', units: makeUnits(s.redAlive || 3, 'RED', 'left'), alive: s.redAlive || 3 },
+          team_b: { name: 'BLUE', units: makeUnits(s.blueAlive || 3, 'BLUE', 'right'), alive: s.blueAlive || 3 },
+          projectiles: Math.floor(Math.random() * 8),
+        });
+      } else {
+        // Synthetic fallback
+        const redCount = Math.max(1, Math.round(5 * (redHealth / 100)));
+        const blueCount = Math.max(1, Math.round(5 * (blueHealth / 100)));
+        const makeUnits = (count, team, side) => {
+          const units = [];
+          for (let j = 0; j < count; j++) {
+            const baseX = side === 'left' ? 50 + Math.random() * 200 : 350 + Math.random() * 200;
+            const baseY = 50 + Math.random() * 300;
+            units.push({
+              team, alive: true,
+              pos: { x: Math.round(baseX), y: Math.round(baseY) },
+              velocity: { vx: +(Math.random() * 2 - 1).toFixed(2), vy: +(Math.random() * 2 - 1).toFixed(2) },
+              hp: Math.round(30 + Math.random() * 70), max_hp: 100,
+              hp_pct: +(30 + Math.random() * 70).toFixed(1),
+            });
+          }
+          return units;
+        };
+        state.scenarios.push({
+          name: simName, mode: i % 2 === 0 ? 'deathmatch' : 'base',
+          time_remaining: +(20 + Math.random() * 40).toFixed(1),
+          map: { width: W, height: H },
+          game_over: false, winner: null,
+          team_a: { name: 'RED', units: makeUnits(redCount, 'RED', 'left'), alive: redCount },
+          team_b: { name: 'BLUE', units: makeUnits(blueCount, 'BLUE', 'right'), alive: blueCount },
+          projectiles: Math.floor(Math.random() * 8),
+        });
+      }
+    }
   }
+
+  console.log('[PIPELINE] captureMultiGameState — mode:', currentMode, 'scenarios:', state.scenarios.length);
   return state;
 }
 
@@ -1166,12 +1276,21 @@ function buildTacticalPrompt(state) {
   return desc;
 }
 
-async function generateTacticalFrame(state) {
-  const prompt = buildTacticalPrompt(state);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${NANOBANANA_MODEL}:generateContent`;
-  const body = { contents: [{ parts: [{ text: prompt }] }] };
-  console.log('[NANOBANANA] Fetching:', url);
-  console.log('[NANOBANANA] Request body:', JSON.stringify(body).substring(0, 300));
+// Models to try for image generation, in order of preference
+const NANOBANANA_MODELS = [
+  NANOBANANA_MODEL,           // gemini-3.1-flash-image-preview
+  'gemini-2.0-flash-exp',     // alternate with image gen support
+];
+
+async function tryNanoBananaModel(modelName, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+  };
+  console.log(`[NANOBANANA] Trying model: ${modelName}`);
+  console.log(`[NANOBANANA] URL: ${url}`);
+  console.log(`[NANOBANANA] Body includes responseModalities: ['TEXT', 'IMAGE']`);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -1179,33 +1298,55 @@ async function generateTacticalFrame(state) {
     body: JSON.stringify(body),
   });
 
-  console.log('[NANOBANANA] Response status:', response.status, response.statusText);
+  console.log(`[NANOBANANA] ${modelName} — status: ${response.status} ${response.statusText}`);
+
   if (!response.ok) {
     const errText = await response.text();
-    console.error('[NANOBANANA] Error response body:', errText.substring(0, 500));
-    throw new Error(`API ${response.status}: ${errText.substring(0, 200)}`);
+    console.error(`[NANOBANANA] ${modelName} — error:`, errText.substring(0, 300));
+    throw new Error(`${modelName} API ${response.status}: ${errText.substring(0, 150)}`);
   }
 
   const data = await response.json();
-  console.log('[NANOBANANA] Response JSON keys:', Object.keys(data));
-  console.log('[NANOBANANA] Candidates count:', data.candidates?.length || 0);
-  if (data.candidates?.[0]) {
-    console.log('[NANOBANANA] First candidate parts:', data.candidates[0].content?.parts?.map(p => ({
-      hasText: !!p.text, textLen: p.text?.length || 0,
-      hasInlineData: !!p.inlineData, mimeType: p.inlineData?.mimeType,
-      dataLen: p.inlineData?.data?.length || 0,
-    })));
-  }
+  const candidate = data.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  console.log(`[NANOBANANA] ${modelName} — response parts:`, parts.map(p => ({
+    hasText: !!p.text, textLen: p.text?.length || 0,
+    hasImage: !!p.inlineData, mime: p.inlineData?.mimeType, dataLen: p.inlineData?.data?.length || 0,
+  })));
+  console.log(`[NANOBANANA] ${modelName} — finishReason:`, candidate?.finishReason);
 
   let imageData = null, textResponse = '';
-  if (data.candidates?.[0]?.content) {
-    for (const part of data.candidates[0].content.parts) {
-      if (part.inlineData) imageData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-      if (part.text) textResponse = part.text;
+  for (const part of parts) {
+    if (part.inlineData) imageData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    if (part.text) textResponse += part.text;
+  }
+
+  return { imageData, textResponse, prompt, model: modelName };
+}
+
+async function generateTacticalFrame(state) {
+  const prompt = buildTacticalPrompt(state);
+  const errors = [];
+
+  for (const modelName of NANOBANANA_MODELS) {
+    try {
+      const result = await tryNanoBananaModel(modelName, prompt);
+      if (result.imageData) {
+        console.log(`[NANOBANANA] SUCCESS with ${modelName} — got image!`);
+        return result;
+      }
+      console.warn(`[NANOBANANA] ${modelName} returned no image, trying next...`);
+      errors.push(`${modelName}: no image returned`);
+    } catch (e) {
+      console.warn(`[NANOBANANA] ${modelName} failed: ${e.message}`);
+      errors.push(e.message);
     }
   }
-  console.log('[NANOBANANA] Final result — hasImage:', !!imageData, 'textLen:', textResponse.length);
-  return { imageData, textResponse, prompt };
+
+  // All models failed
+  const errMsg = errors.join(' | ');
+  console.error('[NANOBANANA] ALL MODELS FAILED:', errMsg);
+  throw new Error(errMsg);
 }
 
 function syntaxHighlightJSON(json) {
@@ -1266,8 +1407,7 @@ function addTurnCard(turnId, state, frameResult) {
 }
 
 async function captureOnce() {
-  console.log('[PIPELINE] captureOnce called, games.length:', games.length);
-  if (games.length === 0) { console.warn('[PIPELINE] No games running, skipping capture'); return; }
+  console.log('[PIPELINE] captureOnce called, mode:', currentMode, 'games.length:', games.length);
   pipelineTurnCount++;
 
   const state = captureMultiGameState();
@@ -1315,7 +1455,7 @@ function toggleCapture() {
     document.getElementById('pipeline-dot').className = 'status-dot active';
     document.getElementById('pipeline-status').textContent = 'AUTO-CAPTURING';
     captureOnce();
-    pipelineTimer = setInterval(() => { if (games.length > 0) captureOnce(); }, CAPTURE_INTERVAL * 1000);
+    pipelineTimer = setInterval(() => captureOnce(), CAPTURE_INTERVAL * 1000);
   } else {
     btn.textContent = 'AUTO';
     btn.classList.remove('active');
