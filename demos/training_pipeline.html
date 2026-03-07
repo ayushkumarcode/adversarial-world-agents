@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adversarial Training Data Pipeline</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:#08090d; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-serif; overflow:hidden; }
+
+  #app { display:flex; width:100vw; height:100vh; }
+
+  /* LEFT: Simulation */
+  #sim-panel { flex:1; display:flex; flex-direction:column; border-right:1px solid rgba(255,255,255,0.06); }
+  #sim-header {
+    height:36px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 12px; background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.06);
+    font-size:11px; font-family:monospace;
+  }
+  #sim-header .title { color:rgba(255,255,255,0.6); font-weight:600; }
+  #sim-canvas-wrap { flex:1; position:relative; }
+  #sim-canvas-wrap canvas { width:100%; height:100%; display:block; }
+
+  /* RIGHT: Training Data */
+  #data-panel { width:480px; display:flex; flex-direction:column; background:#0a0c12; }
+  #data-header {
+    height:36px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 12px; background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.06);
+    font-size:11px; font-family:monospace;
+  }
+  #data-header .title { color:#00ff88; font-weight:600; }
+  #data-scroll { flex:1; overflow-y:auto; padding:8px; }
+  #data-scroll::-webkit-scrollbar { width:4px; }
+  #data-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
+
+  .turn-card {
+    background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
+    border-radius:6px; margin-bottom:8px; overflow:hidden;
+  }
+  .turn-header {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:6px 10px; background:rgba(255,255,255,0.03);
+    font-size:10px; font-family:monospace; color:rgba(255,255,255,0.5);
+    border-bottom:1px solid rgba(255,255,255,0.04);
+  }
+  .turn-header .turn-id { color:#00ff88; font-weight:600; }
+  .turn-body { padding:8px 10px; }
+
+  .data-section { margin-bottom:6px; }
+  .data-label {
+    font-size:9px; font-family:monospace; color:rgba(255,255,255,0.35);
+    text-transform:uppercase; letter-spacing:0.5px; margin-bottom:3px;
+  }
+  .json-block {
+    background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.04);
+    border-radius:3px; padding:5px 7px; font-size:9px; font-family:monospace;
+    color:rgba(255,255,255,0.55); max-height:100px; overflow-y:auto;
+    white-space:pre-wrap; word-break:break-all; line-height:1.4;
+  }
+  .json-block .key { color:#88ccff; }
+  .json-block .str { color:#98c379; }
+  .json-block .num { color:#d19a66; }
+
+  .reasoning-block {
+    background:rgba(100,60,255,0.06); border:1px solid rgba(100,60,255,0.12);
+    border-radius:3px; padding:5px 7px; font-size:9px; font-family:monospace;
+    color:rgba(200,180,255,0.7); max-height:80px; overflow-y:auto; line-height:1.4;
+  }
+
+  .frame-container {
+    position:relative; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.06);
+    border-radius:3px; overflow:hidden; min-height:60px;
+  }
+  .frame-container img {
+    width:100%; display:block; image-rendering:auto;
+  }
+  .frame-loading {
+    display:flex; align-items:center; justify-content:center;
+    padding:20px; font-size:10px; font-family:monospace; color:rgba(255,255,255,0.3);
+  }
+  .frame-error {
+    padding:8px; font-size:9px; font-family:monospace; color:#ff4444; opacity:0.7;
+  }
+  .frame-badge {
+    position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.7);
+    padding:1px 5px; border-radius:2px; font-size:8px; font-family:monospace; color:#00ff88;
+  }
+
+  /* Controls */
+  #controls {
+    padding:8px 12px; border-top:1px solid rgba(255,255,255,0.06);
+    display:flex; gap:8px; align-items:center;
+  }
+  .ctrl-btn {
+    padding:5px 14px; font-size:11px; font-family:monospace; font-weight:600;
+    border:1px solid rgba(255,255,255,0.15); border-radius:4px;
+    background:transparent; color:rgba(255,255,255,0.6); cursor:pointer;
+    transition:all 0.15s;
+  }
+  .ctrl-btn:hover { border-color:rgba(100,160,255,0.5); color:#fff; }
+  .ctrl-btn.active { background:rgba(0,255,136,0.1); border-color:#00ff88; color:#00ff88; }
+  .ctrl-btn.export { background:rgba(255,255,255,0.05); }
+  #turn-counter { font-size:10px; font-family:monospace; color:rgba(255,255,255,0.3); margin-left:auto; }
+
+  /* Status indicator */
+  .status-dot { width:6px; height:6px; border-radius:50%; display:inline-block; margin-right:4px; }
+  .status-dot.active { background:#00ff88; box-shadow:0 0 6px #00ff88; animation:pulse 1.5s infinite; }
+  .status-dot.idle { background:rgba(255,255,255,0.2); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Config overlay */
+  #config-overlay {
+    position:fixed; inset:0; z-index:100;
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    background:rgba(8,9,13,0.95); backdrop-filter:blur(12px);
+  }
+  #config-overlay.hidden { display:none; }
+  #config-overlay h1 { font-size:24px; font-weight:700; margin-bottom:4px; color:#fff; }
+  #config-overlay p { font-size:13px; opacity:0.4; margin-bottom:20px; }
+  .config-field { margin-bottom:12px; text-align:left; width:320px; }
+  .config-field label { display:block; font-size:10px; font-family:monospace; color:rgba(255,255,255,0.4); margin-bottom:4px; text-transform:uppercase; }
+  .config-field input, .config-field select {
+    width:100%; padding:8px 10px; font-size:13px; font-family:monospace;
+    background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+    border-radius:4px; color:#fff; outline:none;
+  }
+  .config-field input:focus, .config-field select:focus { border-color:rgba(0,255,136,0.4); }
+  #launch-btn {
+    margin-top:12px; padding:10px 36px; font-size:14px; font-weight:600;
+    border:none; border-radius:6px; cursor:pointer;
+    background:#00ff88; color:#08090d; transition:transform 0.15s;
+  }
+  #launch-btn:hover { transform:scale(1.05); }
+</style>
+</head>
+<body>
+
+<div id="config-overlay">
+  <h1>TRAINING DATA PIPELINE</h1>
+  <p>Adversarial simulation + NanoBanana tactical frames</p>
+  <div class="config-field">
+    <label>Gemini API Key</label>
+    <input type="password" id="cfg-key" value="AIzaSyDDXCNHC1xZ2RiS8rLhiWLZh0C9YvUxBR0">
+  </div>
+  <div class="config-field">
+    <label>Model (Image Generation)</label>
+    <input type="text" id="cfg-model" value="gemini-3.1-flash-image-preview" placeholder="e.g. gemini-3.1-flash-image-preview">
+  </div>
+  <div class="config-field">
+    <label>Capture Interval (seconds)</label>
+    <input type="number" id="cfg-interval" value="3" min="1" max="10">
+  </div>
+  <div class="config-field">
+    <label>Scenario</label>
+    <select id="cfg-scenario">
+      <option value="urban">Urban Siege</option>
+      <option value="naval">Naval Clash</option>
+      <option value="cyber">Cyber Operations</option>
+      <option value="desert">Desert Storm</option>
+      <option value="arctic">Arctic Recon</option>
+    </select>
+  </div>
+  <button id="launch-btn" onclick="launchPipeline()">LAUNCH PIPELINE</button>
+</div>
+
+<div id="app" style="display:none">
+  <div id="sim-panel">
+    <div id="sim-header">
+      <span class="title">ADVERSARIAL SIMULATION</span>
+      <span id="sim-status" style="color:rgba(255,255,255,0.35)">--</span>
+    </div>
+    <div id="sim-canvas-wrap">
+      <canvas id="sim-canvas"></canvas>
+    </div>
+  </div>
+
+  <div id="data-panel">
+    <div id="data-header">
+      <span><span class="status-dot idle" id="pipeline-dot"></span><span class="title">TRAINING DATA PIPELINE</span></span>
+      <span id="data-status" style="color:rgba(255,255,255,0.3)">IDLE</span>
+    </div>
+    <div id="data-scroll"></div>
+    <div id="controls">
+      <button class="ctrl-btn" id="capture-toggle" onclick="toggleCapture()">START CAPTURE</button>
+      <button class="ctrl-btn" onclick="captureOnce()">SINGLE FRAME</button>
+      <button class="ctrl-btn export" onclick="exportDataset()">EXPORT .ZIP</button>
+      <span id="turn-counter">0 turns captured</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+let API_KEY = '';
+let MODEL = '';
+let CAPTURE_INTERVAL = 3;
+let capturing = false;
+let captureTimer = null;
+let turnData = []; // full training dataset
+let turnCount = 0;
+
+function launchPipeline() {
+  API_KEY = document.getElementById('cfg-key').value.trim();
+  MODEL = document.getElementById('cfg-model').value.trim();
+  CAPTURE_INTERVAL = parseInt(document.getElementById('cfg-interval').value) || 3;
+
+  if (!API_KEY) { alert('API key required'); return; }
+
+  document.getElementById('config-overlay').classList.add('hidden');
+  document.getElementById('app').style.display = 'flex';
+
+  initSim();
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// GAME ENGINE (compact version)
+// ============================================================
+const UR=10, PS=10, SR=160, SC_CD=50, MHP=100, PD=14, MAX_SP=2.0;
+let canvas, ctx, W, H;
+let game = null;
+
+const SCENARIOS = {
+  urban: { name:'URBAN SIEGE', mode:'base', bg:'#0a0e17', grid:'rgba(40,60,90,0.08)', obs:'#1e2535', obB:'rgba(80,110,150,0.2)',
+    a:{n:'ATK',c:'#ff5533',g:[255,60,40],b:['#ff9966','#991122'],p:[255,140,60]},
+    b:{n:'DEF',c:'#4488ff',g:[40,100,255],b:['#88ccff','#112266'],p:[60,160,255]},
+    bl:'HQ', oc:8, um:1, dur:60 },
+  naval: { name:'NAVAL CLASH', mode:'base', bg:'#060d18', grid:'rgba(20,50,100,0.1)', obs:'#0f2030', obB:'rgba(40,90,140,0.2)',
+    a:{n:'FLT-A',c:'#ff8844',g:[255,120,40],b:['#ffaa66','#883311'],p:[255,170,60]},
+    b:{n:'FLT-B',c:'#22ccaa',g:[30,200,160],b:['#66eedd','#0a4040'],p:[60,220,180]},
+    bl:'PORT', oc:4, um:1.2, dur:60 },
+  cyber: { name:'CYBER OPS', mode:'deathmatch', bg:'#050808', grid:'rgba(0,255,100,0.03)', obs:'#0a1a12', obB:'rgba(0,200,80,0.12)',
+    a:{n:'HACK',c:'#00ff88',g:[0,255,100],b:['#66ffaa','#003322'],p:[0,255,120]},
+    b:{n:'FIRE',c:'#ff3366',g:[255,40,80],b:['#ff7799','#550022'],p:[255,80,120]},
+    bl:'SRV', oc:10, um:1.3, dur:60 },
+  desert: { name:'DESERT STORM', mode:'base', bg:'#12100a', grid:'rgba(120,90,40,0.06)', obs:'#2a2218', obB:'rgba(160,120,60,0.15)',
+    a:{n:'EAST',c:'#ffaa33',g:[255,160,40],b:['#ffcc66','#664400'],p:[255,180,50]},
+    b:{n:'WEST',c:'#6688ff',g:[80,120,255],b:['#99bbff','#112255'],p:[100,140,255]},
+    bl:'FOB', oc:6, um:0.8, dur:60 },
+  arctic: { name:'ARCTIC RECON', mode:'deathmatch', bg:'#080c14', grid:'rgba(100,140,200,0.05)', obs:'#1a2233', obB:'rgba(120,160,220,0.12)',
+    a:{n:'NOR',c:'#88ddff',g:[100,200,255],b:['#aaeeff','#113355'],p:[120,200,255]},
+    b:{n:'SOU',c:'#ff6644',g:[255,80,50],b:['#ff9977','#661100'],p:[255,100,60]},
+    bl:'OPS', oc:5, um:0.8, dur:60 },
+};
+
+function rand(a,c){return a+Math.random()*(c-a)}
+function dst(a,c){return Math.hypot(a.x-c.x,a.y-c.y)}
+function clp(v,lo,hi){return Math.max(lo,Math.min(hi,v))}
+function nrm(x,y){const m=Math.hypot(x,y);return m===0?{x:0,y:0}:{x:x/m,y:y/m}}
+
+function initSim() {
+  canvas = document.getElementById('sim-canvas');
+  const wrap = document.getElementById('sim-canvas-wrap');
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+  ctx = canvas.getContext('2d');
+
+  const scKey = document.getElementById('cfg-scenario').value;
+  const sc = SCENARIOS[scKey];
+  const area = W * H;
+  const unitCount = Math.max(4, Math.min(8, Math.round(area / 50000 * sc.um)));
+  const baseX = W - W*0.12, baseY = H/2;
+
+  game = {
+    ctx, W, H, sc, obs:[], aU:[], bU:[], proj:[], parts:[],
+    timer:sc.dur, fc:0, over:false, winner:'',
+    baseX, baseY, unitCount, restartCD:0,
+  };
+  resetGame();
+}
+
+function resetGame() {
+  const g = game, sc = g.sc;
+  g.obs=[]; g.aU=[]; g.bU=[]; g.proj=[]; g.parts=[];
+  g.timer=sc.dur; g.fc=0; g.over=false; g.winner=''; g.restartCD=120;
+
+  for(let i=0;i<sc.oc;i++){
+    let ob,t=0;
+    while(t<30){ob={x:rand(80,g.W-160),y:rand(30,g.H-50),w:rand(25,70),h:rand(12,45)};
+      const cx=ob.x+ob.w/2,cy=ob.y+ob.h/2;
+      if(Math.hypot(cx-g.baseX,cy-g.baseY)<90||ob.x<90){t++;continue;}break;}
+    g.obs.push(ob);
+  }
+
+  const mk=(x,y)=>({x,y,vx:0,vy:0,hp:MHP,maxHP:MHP,alive:true,cd:Math.floor(rand(0,SC_CD)),
+    trail:[],pa:rand(0,Math.PI*2),pp:rand(0,Math.PI*2),r:UR});
+  for(let i=0;i<g.unitCount;i++) g.aU.push(mk(rand(20,70),rand(30,g.H-30)));
+  const isDM = sc.mode==='deathmatch';
+  for(let i=0;i<g.unitCount;i++){
+    if(isDM) g.bU.push(mk(rand(g.W-70,g.W-20),rand(30,g.H-30)));
+    else { const a=(i/g.unitCount)*Math.PI*2;
+      g.bU.push(mk(clp(g.baseX+Math.cos(a)*rand(40,80),30,g.W-30),clp(g.baseY+Math.sin(a)*rand(40,80),30,g.H-30)));}
+  }
+}
+
+// --- Physics/AI (compact) ---
+function steer(u,tx,ty,w){const n=nrm(tx-u.x,ty-u.y);u.vx+=n.x*w;u.vy+=n.y*w;}
+function avoidObs(u,obs){for(const o of obs){const cx=o.x+o.w/2,cy=o.y+o.h/2;const d=Math.hypot(u.x-cx,u.y-cy);const av=Math.max(o.w,o.h)*0.8+u.r+12;if(d<av&&d>0){const s=(av-d)/av*0.5;const n=nrm(u.x-cx,u.y-cy);u.vx+=n.x*s;u.vy+=n.y*s;}}}
+function sep(u,all){for(const o of all){if(o===u||!o.alive)continue;const d=dst(u,o);if(d<UR*3&&d>0){const s=(UR*3-d)/(UR*3)*0.25;const n=nrm(u.x-o.x,u.y-o.y);u.vx+=n.x*s;u.vy+=n.y*s;}}}
+function nearest(u,ts){let b=null,bd=Infinity;for(const t of ts){if(!t.alive)continue;const d=dst(u,t);if(d<bd){bd=d;b=t;}}return b;}
+function pushOut(u,obs){for(const o of obs){const nx=clp(u.x,o.x,o.x+o.w),ny=clp(u.y,o.y,o.y+o.h);if(Math.hypot(u.x-nx,u.y-ny)<u.r){const cx=o.x+o.w/2,cy=o.y+o.h/2;const n=nrm(u.x-cx,u.y-cy);u.x+=n.x*3;u.y+=n.y*3;}}}
+function lineBlk(ax,ay,bx,by,obs){const d=Math.hypot(bx-ax,by-ay);const steps=Math.ceil(d/18);for(let i=1;i<steps;i++){const t=i/steps;const px=ax+(bx-ax)*t,py=ay+(by-ay)*t;for(const o of obs){if(px>=o.x&&px<=o.x+o.w&&py>=o.y&&py<=o.y+o.h)return true;}}return false;}
+
+function updateGame(dt){
+  const g=game,sc=g.sc;
+  if(g.over){g.restartCD--;if(g.restartCD<=0)resetGame();updParts();return;}
+  g.timer-=dt;g.fc++;
+  const isDM=sc.mode==='deathmatch';
+
+  for(const u of g.aU){if(!u.alive)continue;const nb=nearest(u,g.bU);
+    if(isDM){if(nb)steer(u,nb.x,nb.y,0.08);}
+    else{if(nb&&dst(u,nb)<SR*1.2)steer(u,nb.x,nb.y,0.07);else steer(u,g.baseX,g.baseY,0.1);}
+    avoidObs(u,g.obs);sep(u,g.aU);sep(u,g.bU);
+    if(u.x<20)u.vx+=0.4;if(u.x>g.W-20)u.vx-=0.4;if(u.y<20)u.vy+=0.4;if(u.y>g.H-20)u.vy-=0.4;
+    updUnit(u);tryShoot(u,g.bU,'A');}
+  for(const u of g.bU){if(!u.alive)continue;const nr=nearest(u,g.aU);
+    if(isDM){if(nr)steer(u,nr.x,nr.y,0.08);}
+    else{if(nr&&dst(u,nr)<SR*1.3)steer(u,nr.x,nr.y,0.09);
+    else{u.pa+=0.007;steer(u,g.baseX+Math.cos(u.pa)*80,g.baseY+Math.sin(u.pa)*80,0.05);}}
+    avoidObs(u,g.obs);sep(u,g.bU);sep(u,g.aU);
+    if(u.x<20)u.vx+=0.4;if(u.x>g.W-20)u.vx-=0.4;if(u.y<20)u.vy+=0.4;if(u.y>g.H-20)u.vy-=0.4;
+    updUnit(u);tryShoot(u,g.aU,'B');}
+
+  updProj();updParts();checkWin();
+}
+
+function updUnit(u){const sp=Math.hypot(u.vx,u.vy);if(sp>MAX_SP){u.vx=u.vx/sp*MAX_SP;u.vy=u.vy/sp*MAX_SP;}u.vx*=0.96;u.vy*=0.96;u.x+=u.vx;u.y+=u.vy;u.x=clp(u.x,u.r,game.W-u.r);u.y=clp(u.y,u.r,game.H-u.r);pushOut(u,game.obs);u.trail.push({x:u.x,y:u.y});if(u.trail.length>8)u.trail.shift();u.pp+=0.07;}
+
+function tryShoot(unit,enemies,team){if(unit.cd>0){unit.cd--;return;}const t=nearest(unit,enemies);if(!t)return;const d=dst(unit,t);if(d>SR)return;if(lineBlk(unit.x,unit.y,t.x,t.y,game.obs))return;const lx=t.x+t.vx*(d/PS)*0.4,ly=t.y+t.vy*(d/PS)*0.4;const n=nrm(lx-unit.x,ly-unit.y);game.proj.push({x:unit.x+n.x*(unit.r+3),y:unit.y+n.y*(unit.r+3),vx:n.x*PS,vy:n.y*PS,team,life:60});unit.cd=SC_CD+Math.floor(rand(-5,5));}
+
+function updProj(){const g=game,sc=g.sc;for(let i=g.proj.length-1;i>=0;i--){const p=g.proj[i];p.x+=p.vx;p.y+=p.vy;p.life--;let hit=false;for(const o of g.obs){if(p.x>=o.x&&p.x<=o.x+o.w&&p.y>=o.y&&p.y<=o.y+o.h){hit=true;break;}}if(hit||p.life<=0||p.x<0||p.x>g.W||p.y<0||p.y>g.H){g.proj.splice(i,1);continue;}const enemies=p.team==='A'?g.bU:g.aU;for(const u of enemies){if(!u.alive)continue;if(dst(p,u)<u.r+3){u.hp-=PD;for(let j=0;j<3;j++){const a=rand(0,Math.PI*2),s=rand(1,2.5);g.parts.push({x:p.x,y:p.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(6,12),ml:12,r:rand(1,2.5),c:p.team==='A'?sc.a.c:sc.b.c});}if(u.hp<=0){u.alive=false;for(let j=0;j<10;j++){const a=rand(0,Math.PI*2),s=rand(1.5,4);g.parts.push({x:u.x,y:u.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(15,35),ml:35,r:rand(2,4),c:g.aU.includes(u)?sc.a.c:sc.b.c});}}g.proj.splice(i,1);break;}}}}
+
+function updParts(){for(let i=game.parts.length-1;i>=0;i--){const p=game.parts[i];p.x+=p.vx;p.y+=p.vy;p.vx*=0.95;p.vy*=0.95;p.life--;if(p.life<=0)game.parts.splice(i,1);}}
+
+function checkWin(){const g=game,sc=g.sc,aa=g.aU.filter(u=>u.alive).length,ba=g.bU.filter(u=>u.alive).length;
+  if(sc.mode==='base'){for(const u of g.aU){if(u.alive&&dst(u,{x:g.baseX,y:g.baseY})<35){g.over=true;g.winner=sc.a.n;return;}}}
+  if(aa===0){g.over=true;g.winner=sc.b.n;return;}if(ba===0){g.over=true;g.winner=sc.a.n;return;}
+  if(g.timer<=0){g.over=true;g.winner=aa>ba?sc.a.n:ba>aa?sc.b.n:'DRAW';}}
+
+// --- Rendering ---
+function renderGame(){
+  const g=game,{W,H}=g,sc=g.sc;
+  ctx.fillStyle=sc.bg;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle=sc.grid;ctx.lineWidth=1;
+  for(let x=0;x<W;x+=50){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=50){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  for(const o of g.obs){ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(o.x+2,o.y+2,o.w,o.h);ctx.fillStyle=sc.obs;ctx.fillRect(o.x,o.y,o.w,o.h);ctx.strokeStyle=sc.obB;ctx.strokeRect(o.x,o.y,o.w,o.h);}
+
+  if(sc.mode==='base'){const p=0.6+0.4*Math.sin(g.fc*0.04);const gl=sc.b.g;
+    const bgrd=ctx.createRadialGradient(g.baseX,g.baseY,8,g.baseX,g.baseY,40);
+    bgrd.addColorStop(0,`rgba(${gl[0]},${gl[1]},${gl[2]},${0.25*p})`);bgrd.addColorStop(1,`rgba(${gl[0]},${gl[1]},${gl[2]},0)`);
+    ctx.fillStyle=bgrd;ctx.beginPath();ctx.arc(g.baseX,g.baseY,40,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();for(let i=0;i<6;i++){const a=(Math.PI/3)*i-Math.PI/6;const hx=g.baseX+Math.cos(a)*25,hy=g.baseY+Math.sin(a)*25;if(i===0)ctx.moveTo(hx,hy);else ctx.lineTo(hx,hy);}ctx.closePath();
+    ctx.fillStyle=`rgba(${gl[0]},${gl[1]},${gl[2]},0.12)`;ctx.fill();ctx.strokeStyle=`rgba(${gl[0]},${gl[1]},${gl[2]},${0.4+0.3*p})`;ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle=`rgba(${gl[0]},${gl[1]},${gl[2]},${0.35+0.2*p})`;ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.fillText(sc.bl,g.baseX,g.baseY+3);}
+
+  function drawU(u,tm){if(!u.alive)return;const p=0.7+0.3*Math.sin(u.pp),gl=tm.g;
+    const grd=ctx.createRadialGradient(u.x,u.y,u.r*0.3,u.x,u.y,u.r*2);grd.addColorStop(0,`rgba(${gl[0]},${gl[1]},${gl[2]},${0.2*p})`);grd.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=grd;ctx.beginPath();ctx.arc(u.x,u.y,u.r*2,0,Math.PI*2);ctx.fill();
+    const bg=ctx.createRadialGradient(u.x-u.r*0.3,u.y-u.r*0.3,u.r*0.1,u.x,u.y,u.r);bg.addColorStop(0,tm.b[0]);bg.addColorStop(1,tm.b[1]);ctx.fillStyle=bg;ctx.beginPath();ctx.arc(u.x,u.y,u.r,0,Math.PI*2);ctx.fill();
+    const hpF=Math.max(0,u.hp/u.maxHP);if(hpF<1){const bw=u.r*1.8,bx=u.x-bw/2,by=u.y-u.r-5;ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(bx,by,bw,2);ctx.fillStyle=hpF>0.5?'#44dd44':hpF>0.25?'#ddaa22':'#dd3322';ctx.fillRect(bx,by,bw*hpF,2);}}
+  for(const u of g.aU)drawU(u,sc.a);for(const u of g.bU)drawU(u,sc.b);
+  for(const p of g.proj){const c=p.team==='A'?sc.a.p:sc.b.p;ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fill();}
+  for(const p of g.parts){const t=p.life/p.ml;ctx.globalAlpha=t;ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,p.r*t,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+
+  const aa=g.aU.filter(u=>u.alive).length,ba=g.bU.filter(u=>u.alive).length;
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,22);ctx.font='bold 9px monospace';ctx.textAlign='left';ctx.fillStyle=sc.a.c;ctx.fillText(`${sc.a.n}:${aa}`,6,10);ctx.textAlign='right';ctx.fillStyle=sc.b.c;ctx.fillText(`${sc.b.n}:${ba}`,W-6,10);ctx.textAlign='center';ctx.fillStyle='rgba(255,255,255,0.3)';ctx.font='8px monospace';ctx.fillText(sc.name,W/2,10);const ts=Math.max(0,Math.ceil(g.timer));ctx.fillStyle=ts<=10?'#ff4444':'#aabbcc';ctx.fillText(`${ts}s`,W/2,19);
+
+  if(g.over){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';ctx.font='bold 24px monospace';const wt=g.winner===sc.a.n?sc.a:g.winner===sc.b.n?sc.b:null;ctx.fillStyle=wt?wt.c:'#999';ctx.fillText(g.winner==='DRAW'?'DRAW':`${g.winner} WINS`,W/2,H/2);}
+
+  document.getElementById('sim-status').textContent=`${sc.a.n}:${aa} vs ${sc.b.n}:${ba} | ${ts}s`;
+}
+
+let lastTime = performance.now();
+function gameLoop(now){
+  const dt=Math.min((now-lastTime)/1000,0.05);lastTime=now;
+  updateGame(dt);renderGame();requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// STATE SNAPSHOT
+// ============================================================
+function captureGameState() {
+  const g = game, sc = g.sc;
+  const mapUnit = (u, team) => ({
+    team, alive: u.alive,
+    pos: { x: Math.round(u.x), y: Math.round(u.y) },
+    velocity: { vx: +u.vx.toFixed(2), vy: +u.vy.toFixed(2) },
+    hp: Math.round(u.hp), max_hp: u.maxHP,
+    hp_pct: +(u.hp / u.maxHP * 100).toFixed(1),
+  });
+
+  return {
+    scenario: sc.name,
+    mode: sc.mode,
+    timestamp: new Date().toISOString(),
+    game_time_remaining: +g.timer.toFixed(1),
+    map: { width: g.W, height: g.H },
+    obstacles: g.obs.map(o => ({ x:o.x, y:o.y, w:o.w, h:o.h })),
+    base: sc.mode === 'base' ? { x: Math.round(g.baseX), y: Math.round(g.baseY) } : null,
+    team_a: {
+      name: sc.a.n,
+      units: g.aU.map(u => mapUnit(u, sc.a.n)),
+      alive_count: g.aU.filter(u => u.alive).length,
+    },
+    team_b: {
+      name: sc.b.n,
+      units: g.bU.map(u => mapUnit(u, sc.b.n)),
+      alive_count: g.bU.filter(u => u.alive).length,
+    },
+    active_projectiles: g.proj.length,
+    game_over: g.over,
+    winner: g.winner || null,
+  };
+}
+
+// ============================================================
+// NANOBANANA TACTICAL FRAME GENERATION
+// ============================================================
+function buildTacticalPrompt(state) {
+  const units_a = state.team_a.units.filter(u => u.alive);
+  const units_b = state.team_b.units.filter(u => u.alive);
+
+  // Normalize positions to percentages for the prompt
+  const norm = (pos) => ({
+    x: Math.round(pos.x / state.map.width * 100),
+    y: Math.round(pos.y / state.map.height * 100),
+  });
+
+  const aPositions = units_a.map(u => {
+    const p = norm(u.pos);
+    const angle = Math.atan2(u.velocity.vy, u.velocity.vx) * 180 / Math.PI;
+    return `(${p.x}%,${p.y}%) HP:${u.hp_pct}% heading:${Math.round(angle)}deg`;
+  }).join(', ');
+
+  const bPositions = units_b.map(u => {
+    const p = norm(u.pos);
+    const angle = Math.atan2(u.velocity.vy, u.velocity.vx) * 180 / Math.PI;
+    return `(${p.x}%,${p.y}%) HP:${u.hp_pct}% heading:${Math.round(angle)}deg`;
+  }).join(', ');
+
+  const obsDesc = state.obstacles.map(o => {
+    const cx = Math.round((o.x + o.w/2) / state.map.width * 100);
+    const cy = Math.round((o.y + o.h/2) / state.map.height * 100);
+    return `block at (${cx}%,${cy}%)`;
+  }).join(', ');
+
+  const baseDesc = state.base ? `Defensive base/HQ marked at (${Math.round(state.base.x/state.map.width*100)}%,${Math.round(state.base.y/state.map.height*100)}%) as a hexagonal fortification.` : '';
+
+  return `Generate a clean military tactical diagram / situation map for a ${state.scenario} battle scenario.
+
+Style: Dark background (#0a0e17). Vector-line aesthetic. Clean geometric shapes. Minimal, like a real military command display or satellite tactical overlay. NO photorealism. Think: lines, dots, arrows, zones, grid overlay.
+
+Layout:
+- Faint grid overlay across the entire map
+- Gray rectangular obstacles/cover: ${obsDesc}
+${baseDesc}
+
+Team ${state.team_a.name} (RED side - use red/orange markers):
+- ${units_a.length} units at positions: ${aPositions}
+- Show as filled triangles pointing in their heading direction
+- Draw thin red arrows showing movement vectors
+- Units with HP below 50% should have a warning ring
+
+Team ${state.team_b.name} (BLUE side - use blue/cyan markers):
+- ${units_b.length} units at positions: ${bPositions}
+- Show as filled circles
+- Draw thin blue arrows showing movement vectors
+
+Additional tactical elements:
+- Dashed lines between opposing units that are close (threat/engagement lines)
+- Faint colored zones around each team's cluster showing area of control
+- Small "HP" bar next to each unit
+- Timer showing ${Math.round(state.game_time_remaining)}s remaining in top center
+- Team labels "${state.team_a.name}" (left) and "${state.team_b.name}" (right) in corners
+
+This is one frame of training data for an adversarial AI reasoning system. The diagram should clearly communicate the tactical situation to a machine learning model.`;
+}
+
+async function generateTacticalFrame(state) {
+  const prompt = buildTacticalPrompt(state);
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': API_KEY,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`API ${response.status}: ${err.substring(0, 200)}`);
+  }
+
+  const data = await response.json();
+
+  // Extract image from response
+  let imageData = null;
+  let textResponse = '';
+
+  if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+    for (const part of data.candidates[0].content.parts) {
+      if (part.inlineData) {
+        imageData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+      if (part.text) {
+        textResponse = part.text;
+      }
+    }
+  }
+
+  return { imageData, textResponse, prompt };
+}
+
+// ============================================================
+// MOCK GEMINI REASONING (placeholder — replace with real Gemini call)
+// ============================================================
+function generateMockReasoning(state) {
+  const aAlive = state.team_a.alive_count;
+  const bAlive = state.team_b.alive_count;
+  const timeLeft = Math.round(state.game_time_remaining);
+
+  const observations = [
+    `${state.team_a.name} has ${aAlive} units remaining, ${state.team_b.name} has ${bAlive}.`,
+    `${timeLeft}s remaining in ${state.scenario} scenario.`,
+    state.active_projectiles > 0 ? `Active engagement: ${state.active_projectiles} projectiles in flight.` : 'No active firefight.',
+  ];
+
+  const strategies = aAlive > bAlive
+    ? [`${state.team_a.name} has numerical advantage — push aggressively toward objective.`]
+    : bAlive > aAlive
+    ? [`${state.team_b.name} holds numerical advantage — defensive posture recommended.`]
+    : ['Forces are even — tactical positioning is critical.'];
+
+  const risks = [];
+  if (timeLeft < 15) risks.push('LOW TIME: Urgency increases — aggressive moves needed.');
+  if (aAlive <= 2) risks.push(`${state.team_a.name} force critically low.`);
+  if (bAlive <= 2) risks.push(`${state.team_b.name} force critically low.`);
+  if (risks.length === 0) risks.push('No critical risks identified.');
+
+  return {
+    observation: observations.join(' '),
+    strategy: strategies.join(' '),
+    risk_assessment: risks.join(' '),
+    recommended_action: aAlive >= bAlive ? 'ADVANCE' : 'HOLD_POSITION',
+    confidence: +(0.5 + Math.random() * 0.4).toFixed(2),
+  };
+}
+
+// ============================================================
+// UI: TURN CARD RENDERING
+// ============================================================
+function addTurnCard(turnId, state, reasoning, frameResult) {
+  const scroll = document.getElementById('data-scroll');
+
+  const card = document.createElement('div');
+  card.className = 'turn-card';
+
+  const header = document.createElement('div');
+  header.className = 'turn-header';
+  header.innerHTML = `<span class="turn-id">TURN ${String(turnId).padStart(3,'0')}</span><span>${state.timestamp.split('T')[1].split('.')[0]} | ${Math.round(state.game_time_remaining)}s left</span>`;
+  card.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'turn-body';
+
+  // 1. Game State JSON
+  body.innerHTML += `<div class="data-section"><div class="data-label">1. Game State (JSON)</div><div class="json-block">${syntaxHighlight(JSON.stringify({
+    scenario: state.scenario, time_remaining: state.game_time_remaining,
+    team_a: { name: state.team_a.name, alive: state.team_a.alive_count, units: state.team_a.units.filter(u=>u.alive).map(u=>({pos:u.pos,hp:u.hp_pct+'%'})) },
+    team_b: { name: state.team_b.name, alive: state.team_b.alive_count, units: state.team_b.units.filter(u=>u.alive).map(u=>({pos:u.pos,hp:u.hp_pct+'%'})) },
+    projectiles: state.active_projectiles,
+  }, null, 1))}</div></div>`;
+
+  // 2. Reasoning Chain
+  body.innerHTML += `<div class="data-section"><div class="data-label">2. Agent Reasoning Chain (Gemini)</div><div class="reasoning-block">${
+    `OBS: ${reasoning.observation}\nSTR: ${reasoning.strategy}\nRISK: ${reasoning.risk_assessment}\nACT: ${reasoning.recommended_action} (conf: ${reasoning.confidence})`
+  }</div></div>`;
+
+  // 3. NanoBanana Frame
+  const frameSection = document.createElement('div');
+  frameSection.className = 'data-section';
+  frameSection.innerHTML = `<div class="data-label">3. NanoBanana Tactical Frame</div>`;
+  const frameContainer = document.createElement('div');
+  frameContainer.className = 'frame-container';
+  frameContainer.id = `frame-${turnId}`;
+  frameContainer.innerHTML = '<div class="frame-loading">Generating tactical diagram...</div>';
+  frameSection.appendChild(frameContainer);
+  body.appendChild(frameSection);
+
+  card.appendChild(body);
+  scroll.insertBefore(card, scroll.firstChild);
+
+  // Update frame async
+  if (frameResult instanceof Promise) {
+    frameResult.then(result => {
+      if (result.imageData) {
+        frameContainer.innerHTML = `<img src="${result.imageData}" alt="Tactical diagram turn ${turnId}"><div class="frame-badge">NanoBanana 2</div>`;
+      } else {
+        frameContainer.innerHTML = `<div class="frame-error">No image returned. Text: ${result.textResponse || 'none'}</div>`;
+      }
+    }).catch(err => {
+      frameContainer.innerHTML = `<div class="frame-error">Error: ${err.message}</div>`;
+    });
+  }
+}
+
+function syntaxHighlight(json) {
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+    let cls = 'num';
+    if (/^"/.test(match)) { cls = /:$/.test(match) ? 'key' : 'str'; }
+    return `<span class="${cls}">${match}</span>`;
+  });
+}
+
+// ============================================================
+// CAPTURE CONTROLS
+// ============================================================
+async function captureOnce() {
+  if (game.over) return;
+
+  turnCount++;
+  const state = captureGameState();
+  const reasoning = generateMockReasoning(state);
+
+  // Store in dataset
+  const turnEntry = { turn: turnCount, state, reasoning, frame_pending: true };
+  turnData.push(turnEntry);
+
+  // Update UI status
+  document.getElementById('pipeline-dot').classList.add('active');
+  document.getElementById('data-status').textContent = 'GENERATING...';
+
+  // Generate frame via NanoBanana
+  const framePromise = generateTacticalFrame(state).then(result => {
+    turnEntry.frame_pending = false;
+    turnEntry.frame_base64 = result.imageData;
+    turnEntry.prompt_used = result.prompt;
+    document.getElementById('pipeline-dot').classList.remove('active');
+    document.getElementById('data-status').textContent = 'READY';
+    return result;
+  }).catch(err => {
+    turnEntry.frame_pending = false;
+    turnEntry.frame_error = err.message;
+    document.getElementById('pipeline-dot').classList.remove('active');
+    document.getElementById('data-status').textContent = 'ERROR';
+    throw err;
+  });
+
+  addTurnCard(turnCount, state, reasoning, framePromise);
+  document.getElementById('turn-counter').textContent = `${turnCount} turns captured`;
+}
+
+function toggleCapture() {
+  capturing = !capturing;
+  const btn = document.getElementById('capture-toggle');
+  if (capturing) {
+    btn.textContent = 'STOP CAPTURE';
+    btn.classList.add('active');
+    document.getElementById('pipeline-dot').classList.add('active');
+    document.getElementById('data-status').textContent = 'AUTO-CAPTURING';
+    // First capture immediately
+    captureOnce();
+    captureTimer = setInterval(() => {
+      if (!game.over) captureOnce();
+    }, CAPTURE_INTERVAL * 1000);
+  } else {
+    btn.textContent = 'START CAPTURE';
+    btn.classList.remove('active');
+    document.getElementById('pipeline-dot').classList.remove('active');
+    document.getElementById('data-status').textContent = 'PAUSED';
+    clearInterval(captureTimer);
+    captureTimer = null;
+  }
+}
+
+// ============================================================
+// EXPORT
+// ============================================================
+function exportDataset() {
+  if (turnData.length === 0) { alert('No turns captured yet.'); return; }
+
+  // Export as JSONL (one line per turn)
+  const jsonl = turnData.map(t => JSON.stringify({
+    turn: t.turn,
+    state: t.state,
+    reasoning: t.reasoning,
+    has_frame: !!t.frame_base64,
+    frame_error: t.frame_error || null,
+  })).join('\n');
+
+  const blob = new Blob([jsonl], { type: 'application/jsonl' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `adversarial_training_data_${Date.now()}.jsonl`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
