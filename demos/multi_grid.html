@@ -725,6 +725,7 @@ function resetGrid() {
   geminiCallCount = 0; iframeReports.clear();
   redMove = 'HOLD_POSITION'; blueMove = 'HOLD_POSITION';
   agentInFlight = false; lastAgentCallTime = 0; agentMoveCount = 0;
+  _firstLLMMoveLogged = false;
   reasoningStore = {}; screenshotStore = {};
   window._completionShown = false;
   const compOverlay = document.getElementById('completion-overlay');
@@ -841,7 +842,8 @@ function advanceTurn() {
   document.getElementById('stat-engagements').textContent = engagements;
 
   const territory = Math.round(50 + (blueHealth - redHealth) * 0.3);
-  document.getElementById('stat-territory').textContent =
+  const territoryEl = document.getElementById('stat-territory');
+  if (territoryEl) territoryEl.textContent =
     `${Math.max(5, Math.min(95, 100 - territory))}/${Math.max(5, Math.min(95, territory))}`;
 
   // Run Gemini reasoning for sidebar (both modes)
@@ -850,7 +852,8 @@ function advanceTurn() {
   // Auto-capture training data every 3rd turn (both modes)
   if (turnNumber % 3 === 1) {
     console.log('[PIPELINE] Auto-capturing on turn', turnNumber, 'mode:', currentMode);
-    captureOnce();
+    try { captureOnce().catch(e => console.error('[PIPELINE] captureOnce async error:', e)); }
+    catch (e) { console.error('[PIPELINE] captureOnce sync error:', e); }
   }
 
   // Update running/completed counts
@@ -1725,6 +1728,7 @@ function addTurnCard(turnId, state, frameResult) {
 }
 
 async function captureOnce() {
+  try {
   console.log('[PIPELINE] captureOnce called, mode:', currentMode, 'games.length:', games.length);
   pipelineTurnCount++;
 
@@ -1782,6 +1786,15 @@ async function captureOnce() {
   addTurnCard(pipelineTurnCount, state, framePromise);
   document.getElementById('pipe-turn-count').textContent = `${pipelineTurnCount} turns`;
   console.log('[PIPELINE] Turn card added, total turns:', pipelineTurnCount);
+  } catch (e) {
+    console.error('[PIPELINE] CRITICAL ERROR in captureOnce:', e);
+    // Still show something in the panel
+    const scroll = document.getElementById('turn-scroll');
+    const errDiv = document.createElement('div');
+    errDiv.className = 'turn-card';
+    errDiv.innerHTML = `<div class="turn-card-header"><span class="turn-id">ERROR</span><span>${e.message}</span></div>`;
+    scroll.insertBefore(errDiv, scroll.firstChild);
+  }
 }
 
 function toggleCapture() {
@@ -2263,6 +2276,7 @@ function applyMove(u, move, friendlies, enemies, g) {
   }
 }
 
+let _firstLLMMoveLogged = false;
 function updateGame(g,dt){
   if(g.over){g.restartCD--;if(g.restartCD<=0)initGame(g);updParts(g);return;}
   g.timer-=dt;g.fc++;
@@ -2270,6 +2284,12 @@ function updateGame(g,dt){
   // Apply Gemini-chosen moves (or fallback to ATTACK_NEAREST)
   const rMove = agentControlEnabled ? redMove : 'ATTACK_NEAREST';
   const bMove = agentControlEnabled ? blueMove : 'ATTACK_NEAREST';
+
+  // Log once when LLM moves first take effect
+  if (!_firstLLMMoveLogged && agentMoveCount > 0) {
+    _firstLLMMoveLogged = true;
+    console.log(`%c[GAME] LLM CONTROL ACTIVE — units now executing: RED=${rMove} BLUE=${bMove}`, 'color: #00ff88; font-weight: bold; font-size: 14px; background: #1a2a1a; padding: 4px 8px;');
+  }
 
   for(const u of g.aU){if(!u.alive)continue;
     applyMove(u, rMove, g.aU, g.bU, g);
