@@ -434,69 +434,71 @@
 
 <!-- ── CONFIG OVERLAY ── -->
 <div id="config-overlay">
-  <div class="config-logo">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="1.5" opacity="0.6">
-      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-    </svg>
-    <h1>AWA Command Center</h1>
-  </div>
-  <div class="config-subtitle">Adversarial World Agents -- Surveillance Grid</div>
-
-  <div class="config-section-label">Engine Mode</div>
-  <div class="mode-toggle">
-    <button class="mode-btn active" onclick="setMode('same')" id="mode-same">SAME ENGINE</button>
-    <button class="mode-btn" onclick="setMode('multi')" id="mode-multi">MULTI ENGINE</button>
-  </div>
-  <div class="mode-hint" id="mode-hint">Single lightweight engine, different scenarios</div>
-
-  <div class="config-section-label" style="margin-top:12px">Grid Layout</div>
-  <div class="presets">
-    <button class="preset-btn" onclick="setGrid(2,1)">2x1</button>
-    <button class="preset-btn" onclick="setGrid(2,2)">2x2</button>
-    <button class="preset-btn" onclick="setGrid(3,2)">3x2</button>
-    <button class="preset-btn" onclick="setGrid(3,3)">3x3</button>
-    <button class="preset-btn" onclick="setGrid(4,3)">4x3</button>
-    <button class="preset-btn" onclick="setGrid(4,4)">4x4</button>
-  </div>
-  <div class="config-row">
-    <input type="number" id="cols-input" value="3" min="1" max="8">
-    <span>x</span>
-    <input type="number" id="rows-input" value="2" min="1" max="8">
-  </div>
-
-  <div class="config-scenario">
-    <div class="config-section-label">Scenario</div>
-    <select id="scenario-select">
-      <option value="mixed">Mixed Scenarios</option>
-      <option value="urban">Urban Operations</option>
-      <option value="naval">Naval Theater</option>
-      <option value="cyber">Cyber Warfare</option>
-      <option value="desert">Desert Operations</option>
-    </select>
-  </div>
-
-  <div style="display:flex; gap:16px; margin-bottom:20px;">
-    <div class="config-scenario" style="margin-bottom:0;">
-      <div class="config-section-label">Difficulty</div>
-      <select id="difficulty-select">
-        <option value="easy">Easy</option>
-        <option value="medium" selected>Medium</option>
-        <option value="hard">Hard</option>
-        <option value="extreme">Extreme</option>
-      </select>
+  <!-- Hero -->
+  <div style="text-align:center; margin-bottom:40px;">
+    <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:6px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="1.5" opacity="0.5">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+      <h1 style="font-size:18px; font-weight:800; letter-spacing:6px; color:#fff; text-transform:uppercase; margin:0;">AWA</h1>
     </div>
-    <div class="config-scenario" style="margin-bottom:0;">
-      <div class="config-section-label">Agent Strategy</div>
-      <select id="agent-select">
-        <option value="adaptive" selected>Adaptive</option>
-        <option value="aggressive">Aggressive</option>
-        <option value="defensive">Defensive</option>
-        <option value="random">Random</option>
-      </select>
-    </div>
+    <div style="font-size:10px; letter-spacing:4px; opacity:0.25; text-transform:uppercase;">Adversarial World Agents</div>
+    <div style="font-size:9px; opacity:0.15; margin-top:4px; letter-spacing:2px;">Two AI agents fight. The data trains the next ones.</div>
   </div>
 
-  <button id="deploy-btn" onclick="launch()">Deploy</button>
+  <!-- Step 1: Mode -->
+  <div style="display:flex; flex-direction:column; align-items:center; gap:20px; width:360px;">
+    <div style="width:100%;">
+      <div class="config-section-label" style="text-align:center;">Simulation Mode</div>
+      <div class="mode-toggle" style="width:100%;">
+        <button class="mode-btn active" onclick="setMode('same')" id="mode-same" style="flex:1;">SAME ENGINE</button>
+        <button class="mode-btn" onclick="setMode('multi')" id="mode-multi" style="flex:1;">MULTI ENGINE</button>
+      </div>
+      <div class="mode-hint" id="mode-hint" style="text-align:center;">Single engine, multiple war scenarios</div>
+    </div>
+
+    <!-- Step 2: Grid -->
+    <div style="width:100%;">
+      <div class="config-section-label" style="text-align:center;">Grid Layout</div>
+      <div class="presets" style="justify-content:center;">
+        <button class="preset-btn" onclick="setGrid(2,1)">2x1</button>
+        <button class="preset-btn" onclick="setGrid(2,2)">2x2</button>
+        <button class="preset-btn" onclick="setGrid(3,2)">3x2</button>
+        <button class="preset-btn" onclick="setGrid(3,3)">3x3</button>
+        <button class="preset-btn" onclick="setGrid(4,3)">4x3</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Agent AI -->
+    <div style="width:100%; display:flex; gap:12px;">
+      <div style="flex:1; text-align:center;">
+        <div class="config-section-label">Red Agent</div>
+        <select id="red-agent-select" class="config-select" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:10px; background:rgba(255,60,60,0.06); border:1px solid rgba(255,60,60,0.15); border-radius:3px; color:#ff9b9b; padding:7px 10px; cursor:pointer; text-align:center;">
+          <option value="gemini" selected>Gemini AI</option>
+          <option value="hardcoded">Hardcoded AI</option>
+        </select>
+      </div>
+      <div style="flex:1; text-align:center;">
+        <div class="config-section-label">Blue Agent</div>
+        <select id="blue-agent-select" class="config-select" style="width:100%; font-family:'JetBrains Mono',monospace; font-size:10px; background:rgba(60,100,255,0.06); border:1px solid rgba(60,100,255,0.15); border-radius:3px; color:#9bc3ff; padding:7px 10px; cursor:pointer; text-align:center;">
+          <option value="gemini" selected>Gemini AI</option>
+          <option value="hardcoded">Hardcoded AI</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Hidden inputs for grid size -->
+    <input type="hidden" id="cols-input" value="3">
+    <input type="hidden" id="rows-input" value="2">
+
+    <!-- Deploy -->
+    <button id="deploy-btn" onclick="launch()" style="margin-top:8px;">Deploy Agents</button>
+
+    <!-- Powered by -->
+    <div style="font-size:8px; opacity:0.15; letter-spacing:2px; text-transform:uppercase; margin-top:4px;">
+      Powered by Gemini 2.5 Flash via OpenRouter
+    </div>
+  </div>
 </div>
 
 <!-- ── TOP COMMAND BAR ── -->
@@ -671,6 +673,23 @@ function setGrid(c, r) {
 function launch() {
   const cols = Math.max(1, Math.min(8, parseInt(document.getElementById('cols-input').value) || 3));
   const rows = Math.max(1, Math.min(8, parseInt(document.getElementById('rows-input').value) || 2));
+
+  // Read agent configuration
+  const redAgentEl = document.getElementById('red-agent-select');
+  const blueAgentEl = document.getElementById('blue-agent-select');
+  const redIsGemini = redAgentEl ? redAgentEl.value === 'gemini' : true;
+  const blueIsGemini = blueAgentEl ? blueAgentEl.value === 'gemini' : true;
+  agentControlEnabled = redIsGemini || blueIsGemini;
+
+  console.log('%c[LAUNCH] Configuration:', 'color: #00ff88; font-weight: bold; font-size: 14px');
+  console.log(`  Mode: ${currentMode}`);
+  console.log(`  Grid: ${cols}x${rows}`);
+  console.log(`  Red Agent: ${redIsGemini ? 'GEMINI AI' : 'HARDCODED AI'}`);
+  console.log(`  Blue Agent: ${blueIsGemini ? 'GEMINI AI' : 'HARDCODED AI'}`);
+  console.log(`  Agent Control: ${agentControlEnabled ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`  Model: ${REASONING_MODEL}`);
+  console.log(`  API: OpenRouter`);
+
   document.getElementById('config-overlay').classList.add('hidden');
   document.getElementById('top-bar').classList.remove('hidden');
   document.getElementById('main-layout').classList.remove('hidden');
@@ -1059,7 +1078,9 @@ function getAgentPerspective(team) {
 }
 
 async function requestSingleAgentMove(team, state) {
-  const prompt = `You are the ${team.toUpperCase()} commander in a real-time war simulation. Pick ONE move for your team.
+  const teamUpper = team.toUpperCase();
+  const teamColor = team === 'red' ? '#ff6b6b' : '#6ba3ff';
+  const prompt = `You are the ${teamUpper} commander in a real-time war simulation. Pick ONE move for your team.
 
 STATE:
 ${state}
@@ -1080,6 +1101,11 @@ Move descriptions:
 Respond JSON: {"move":"MOVE_NAME","reasoning":{"saw":"...","plan":"...","risk":"...","did":"..."}}
 Keep each reasoning line under 12 words.`;
 
+  console.log(`%c[AGENT-${teamUpper}] Sending prompt to ${REASONING_MODEL}`, `color: ${teamColor}`);
+  console.log(`[AGENT-${teamUpper}] Prompt (${prompt.length} chars):`, prompt);
+  console.log(`[AGENT-${teamUpper}] Endpoint: ${OPENROUTER_URL}`);
+
+  const t0 = performance.now();
   const resp = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENROUTER_API_KEY}` },
@@ -1091,15 +1117,44 @@ Keep each reasoning line under 12 words.`;
     })
   });
 
-  if (!resp.ok) throw new Error(`${resp.status}: ${(await resp.text()).substring(0, 100)}`);
+  const elapsed = (performance.now() - t0).toFixed(0);
+
+  if (!resp.ok) {
+    const errBody = await resp.text();
+    console.error(`%c[AGENT-${teamUpper}] API FAILED (${elapsed}ms) status=${resp.status}`, `color: #ff4444; font-weight: bold`);
+    console.error(`[AGENT-${teamUpper}] Error body:`, errBody.substring(0, 300));
+    throw new Error(`${resp.status}: ${errBody.substring(0, 100)}`);
+  }
+
   const data = await resp.json();
   const text = data.choices?.[0]?.message?.content || '';
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON');
-  const parsed = JSON.parse(match[0]);
+  const finishReason = data.choices?.[0]?.finish_reason || '?';
 
-  // Validate move
+  console.log(`%c[AGENT-${teamUpper}] Response received (${elapsed}ms, ${text.length} chars, finish: ${finishReason})`, `color: ${teamColor}; font-weight: bold`);
+  console.log(`[AGENT-${teamUpper}] Raw response:`, text);
+
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) {
+    console.error(`%c[AGENT-${teamUpper}] NO JSON found in response!`, 'color: #ff4444; font-weight: bold');
+    console.error(`[AGENT-${teamUpper}] Full text was:`, text);
+    throw new Error('No JSON');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch (e) {
+    console.error(`[AGENT-${teamUpper}] JSON parse failed:`, e.message, 'Attempted:', match[0].substring(0, 200));
+    throw e;
+  }
+
   const move = AGENT_MOVES.includes(parsed.move) ? parsed.move : 'ATTACK_NEAREST';
+  if (move !== parsed.move) {
+    console.warn(`%c[AGENT-${teamUpper}] Invalid move "${parsed.move}" — defaulting to ATTACK_NEAREST`, 'color: #ffaa00');
+  }
+  console.log(`%c[AGENT-${teamUpper}] MOVE CHOSEN: ${move}`, `color: ${teamColor}; font-weight: bold; font-size: 12px`);
+  console.log(`[AGENT-${teamUpper}] Reasoning:`, parsed.reasoning);
+
   return { move, reasoning: parsed.reasoning || { saw:'--', plan:'--', risk:'--', did:'--' } };
 }
 
@@ -1115,9 +1170,13 @@ async function requestAgentMoves() {
   const redState = getAgentPerspective('red');
   const blueState = getAgentPerspective('blue');
 
-  console.log(`%c[AGENT] Turn ${turn} — requesting moves for RED + BLUE (parallel)`, 'color: #ffaa00; font-weight: bold');
-  console.log(`[AGENT] RED sees:`, redState.substring(0, 200));
-  console.log(`[AGENT] BLU sees:`, blueState.substring(0, 200));
+  console.log('%c════════════════════════════════════════════', 'color: #ffaa00');
+  console.log(`%c[AGENT] MOVE REQUEST #${geminiCallCount + 1} (turn ${turn}) — ${new Date().toLocaleTimeString()}`, 'color: #ffaa00; font-weight: bold; font-size: 13px');
+  console.log(`[AGENT] Current moves: RED=${redMove} | BLUE=${blueMove}`);
+  console.log(`[AGENT] Agent control: ${agentControlEnabled ? 'ENABLED (LLM controls units)' : 'DISABLED (hardcoded AI)'}`);
+  console.log(`[AGENT] Model: ${REASONING_MODEL} via OpenRouter`);
+  console.log(`[AGENT] RED state:\n`, redState);
+  console.log(`[AGENT] BLU state:\n`, blueState);
 
   const t0 = performance.now();
   try {
@@ -1127,12 +1186,18 @@ async function requestAgentMoves() {
     ]);
 
     const elapsed = (performance.now() - t0).toFixed(0);
+    const prevRed = redMove, prevBlue = blueMove;
     redMove = redResult.move;
     blueMove = blueResult.move;
 
-    console.log(`%c[AGENT] Moves received (${elapsed}ms): RED=${redMove} BLUE=${blueMove}`, 'color: #ffaa00; font-weight: bold');
+    const redChanged = prevRed !== redMove;
+    const blueChanged = prevBlue !== blueMove;
+    console.log(`%c[AGENT] MOVES APPLIED (${elapsed}ms):`, 'color: #ffaa00; font-weight: bold; font-size: 13px');
+    console.log(`%c  RED: ${prevRed} → ${redMove} ${redChanged ? '*** CHANGED ***' : '(same)'}`, `color: #ff6b6b; font-weight: ${redChanged ? 'bold' : 'normal'}`);
+    console.log(`%c  BLU: ${prevBlue} → ${blueMove} ${blueChanged ? '*** CHANGED ***' : '(same)'}`, `color: #6ba3ff; font-weight: ${blueChanged ? 'bold' : 'normal'}`);
     console.log(`[AGENT] RED reasoning:`, redResult.reasoning);
     console.log(`[AGENT] BLU reasoning:`, blueResult.reasoning);
+    console.log(`[AGENT] These moves are NOW controlling all units in updateGame() via applyMove()`);
 
     // Update HUD move display
     const redMoveEl = document.getElementById('red-move-display');
