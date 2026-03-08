@@ -1216,6 +1216,16 @@ async function requestAgentMoves() {
       blueMoveEl.style.color = '#00ff88'; setTimeout(() => { if(blueMoveEl) blueMoveEl.style.color = '#9bc3ff'; }, 800);
     }
 
+    // Store reasoning for pipeline data capture
+    reasoningStore[turn] = {
+      red: redResult.reasoning ? { ...redResult.reasoning, did: `${redMove}: ${redResult.reasoning.did || '--'}` } : null,
+      blue: blueResult.reasoning ? { ...blueResult.reasoning, did: `${blueMove}: ${blueResult.reasoning.did || '--'}` } : null
+    };
+
+    // Store screenshot for pipeline
+    const screenshot = getSameEngineScreenshot();
+    if (screenshot) screenshotStore[turn] = screenshot;
+
     // Feed reasoning into sidebar
     if (redResult.reasoning) insertReasoningEntry('red', turn, { ...redResult.reasoning, did: `${redMove}: ${redResult.reasoning.did || '--'}` });
     if (blueResult.reasoning) insertReasoningEntry('blue', turn, { ...blueResult.reasoning, did: `${blueMove}: ${blueResult.reasoning.did || '--'}` });
@@ -1223,6 +1233,7 @@ async function requestAgentMoves() {
   } catch (err) {
     console.error(`[AGENT] Failed (${(performance.now()-t0).toFixed(0)}ms):`, err.message);
     const errReasoning = { saw: 'API ERROR', plan: err.message, risk: '--', did: '--' };
+    reasoningStore[turn] = { red: errReasoning, blue: errReasoning };
     insertReasoningEntry('red', turn, errReasoning);
     insertReasoningEntry('blue', turn, errReasoning);
   } finally {
@@ -2306,7 +2317,7 @@ function updateGame(g,dt){
     updUnit(u,g);tryShoot(u,g.aU,g,'B');
   }
 
-  if(g.sc.mode==='koth'){
+  if(g.sc && g.sc.mode==='koth'){
     for(const u of g.aU){if(u.alive&&dst(u,{x:g.zoneX,y:g.zoneY})<g.zoneR)g.kothA+=dt;}
     for(const u of g.bU){if(u.alive&&dst(u,{x:g.zoneX,y:g.zoneY})<g.zoneR)g.kothB+=dt;}
   }
