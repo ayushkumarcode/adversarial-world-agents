@@ -2210,7 +2210,7 @@ function updateGame(g,dt){
     updUnit(u,g);tryShoot(u,g.aU,g,'B');
   }
 
-  if(isKoth){
+  if(g.sc.mode==='koth'){
     for(const u of g.aU){if(u.alive&&dst(u,{x:g.zoneX,y:g.zoneY})<g.zoneR)g.kothA+=dt;}
     for(const u of g.bU){if(u.alive&&dst(u,{x:g.zoneX,y:g.zoneY})<g.zoneR)g.kothB+=dt;}
   }
