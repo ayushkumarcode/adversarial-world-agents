@@ -18,12 +18,12 @@
   #config-overlay {
     position: fixed; inset: 0; z-index: 200;
     display: flex; flex-direction: column; justify-content: center; align-items: center;
-    background: #06080c url('../bg.png') center/cover no-repeat;
+    background: #06080c url('/bg.png') center/cover no-repeat;
   }
   #config-overlay::before {
     content: ''; position: absolute; inset: 0;
-    background: rgba(6,8,12,0.82);
-    backdrop-filter: blur(6px);
+    background: rgba(6,8,12,0.55);
+    backdrop-filter: blur(4px);
     z-index: -1;
   }
   #config-overlay.hidden { display: none; }
